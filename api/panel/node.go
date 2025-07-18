@@ -140,11 +140,12 @@ type Rules struct {
 }
 
 func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
-	const path = "/api/v1/server/UniProxy/config"
+	const path = ""
 	r, err := c.client.
 		R().
 		SetHeader("If-None-Match", c.nodeEtag).
 		ForceContentType("application/json").
+		SetQueryParam("act", "config").
 		Get(path)
 
 	if r.StatusCode() == 304 {

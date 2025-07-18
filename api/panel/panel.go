@@ -64,10 +64,14 @@ func New(c *conf.ApiConfig) (*Client, error) {
 	}
 	// set params
 	client.SetQueryParams(map[string]string{
-		"node_type": c.NodeType,
-		"node_id":   strconv.Itoa(c.NodeID),
-		"token":     c.Key,
+		"node_type":    c.NodeType,
+		"node_id": strconv.Itoa(c.NodeID),
+		"token":   c.Key,
 	})
+	
+	// set UA
+	client.SetHeader("User-Agent", "V2bX v0.2.5 test-2025.07.18")
+
 	return &Client{
 		client:   client,
 		Token:    c.Key,
