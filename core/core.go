@@ -11,7 +11,7 @@ var (
 )
 
 func NewCore(c []conf.CoreConfig) (Core, error) {
-	if len(c) < 0 {
+	if len(c) == 0 {
 		return nil, errors.New("no have vail core")
 	}
 	// multi core

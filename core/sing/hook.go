@@ -27,13 +27,6 @@ func (h *HookServer) ModeList() []string {
 	return nil
 }
 
-func NewHookServer() *HookServer {
-	server := &HookServer{
-		counter: sync.Map{},
-	}
-	return server
-}
-
 func (h *HookServer) RoutedConnection(_ context.Context, conn net.Conn, m adapter.InboundContext, _ adapter.Rule, _ adapter.Outbound) net.Conn {
 	l, err := limiter.GetLimiter(m.Inbound)
 	if err != nil {

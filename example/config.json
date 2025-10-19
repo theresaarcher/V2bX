@@ -7,14 +7,15 @@
     {
       "Type": "sing",
       "Log": {
-        "Level": "error",
+        "Level": "info",
         "Timestamp": true
       },
       "NTP": {
-        "Enable": true,
+        "Enable": false,
         "Server": "time.apple.com",
         "ServerPort": 0
-      }
+      },
+      "OriginalPath": "/etc/V2bX/sing_origin.json"
     }
   ],
   "Nodes": [
@@ -27,20 +28,19 @@
       "Timeout": 30,
       "ListenIP": "0.0.0.0",
       "SendIP": "0.0.0.0",
-      "EnableProxyProtocol": false,
-      "EnableDNS": true,
-      "DomainStrategy": "ipv4_only",
-      "LimitConfig": {
-        "EnableRealtime": false,
-        "SpeedLimit": 0,
-        "IPLimit": 0,
-        "ConnLimit": 0,
-        "EnableDynamicSpeedLimit": false,
-        "DynamicSpeedLimitConfig": {
-          "Periodic": 60,
-          "Traffic": 1000,
-          "SpeedLimit": 100,
-          "ExpireTime": 60
+      "DeviceOnlineMinTraffic": 200,
+      "MinReportTraffic": 0,
+      "TCPFastOpen": false,
+      "SniffEnabled": true,
+      "CertConfig": {
+        "CertMode": "self",
+        "RejectUnknownSni": false,
+        "CertDomain": "example.com",
+        "CertFile": "/etc/V2bX/fullchain.cer",
+        "KeyFile": "/etc/V2bX/cert.key",
+        "Provider": "cloudflare",
+        "DNSEnv": {
+          "EnvName": "env1"
         }
       }
     }

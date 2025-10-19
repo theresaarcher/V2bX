@@ -13,11 +13,12 @@ import (
 	"strings"
 	"time"
 
+	"encoding/json"
+
 	"github.com/go-acme/lego/v4/certificate"
 	"github.com/go-acme/lego/v4/challenge/http01"
 	"github.com/go-acme/lego/v4/providers/dns"
 	"github.com/go-acme/lego/v4/registration"
-	"github.com/goccy/go-json"
 
 	"github.com/InazumaV/V2bX/common/file"
 	"github.com/InazumaV/V2bX/conf"

@@ -14,9 +14,10 @@ import (
 var _ server.TrafficLogger = (*HookServer)(nil)
 
 type HookServer struct {
-	Tag     string
-	logger  *zap.Logger
-	Counter sync.Map
+	Tag                   string
+	logger                *zap.Logger
+	Counter               sync.Map
+	ReportMinTrafficBytes int64
 }
 
 func (h *HookServer) TraceStream(stream quic.Stream, stats *server.StreamStats) {

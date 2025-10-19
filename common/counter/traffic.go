@@ -6,7 +6,7 @@ import (
 )
 
 type TrafficCounter struct {
-	counters sync.Map
+	Counters sync.Map
 }
 
 type TrafficStorage struct {
@@ -18,26 +18,26 @@ func NewTrafficCounter() *TrafficCounter {
 	return &TrafficCounter{}
 }
 
-func (c *TrafficCounter) GetCounter(id string) *TrafficStorage {
-	if cts, ok := c.counters.Load(id); ok {
+func (c *TrafficCounter) GetCounter(uuid string) *TrafficStorage {
+	if cts, ok := c.Counters.Load(uuid); ok {
 		return cts.(*TrafficStorage)
 	}
 	newStorage := &TrafficStorage{}
-	if cts, loaded := c.counters.LoadOrStore(id, newStorage); loaded {
+	if cts, loaded := c.Counters.LoadOrStore(uuid, newStorage); loaded {
 		return cts.(*TrafficStorage)
 	}
 	return newStorage
 }
 
-func (c *TrafficCounter) GetUpCount(id string) int64 {
-	if cts, ok := c.counters.Load(id); ok {
+func (c *TrafficCounter) GetUpCount(uuid string) int64 {
+	if cts, ok := c.Counters.Load(uuid); ok {
 		return cts.(*TrafficStorage).UpCounter.Load()
 	}
 	return 0
 }
 
-func (c *TrafficCounter) GetDownCount(id string) int64 {
-	if cts, ok := c.counters.Load(id); ok {
+func (c *TrafficCounter) GetDownCount(uuid string) int64 {
+	if cts, ok := c.Counters.Load(uuid); ok {
 		return cts.(*TrafficStorage).DownCounter.Load()
 	}
 	return 0
@@ -45,30 +45,30 @@ func (c *TrafficCounter) GetDownCount(id string) int64 {
 
 func (c *TrafficCounter) Len() int {
 	length := 0
-	c.counters.Range(func(_, _ interface{}) bool {
+	c.Counters.Range(func(_, _ interface{}) bool {
 		length++
 		return true
 	})
 	return length
 }
 
-func (c *TrafficCounter) Reset(id string) {
-	if cts, ok := c.counters.Load(id); ok {
+func (c *TrafficCounter) Reset(uuid string) {
+	if cts, ok := c.Counters.Load(uuid); ok {
 		cts.(*TrafficStorage).UpCounter.Store(0)
 		cts.(*TrafficStorage).DownCounter.Store(0)
 	}
 }
 
-func (c *TrafficCounter) Delete(id string) {
-	c.counters.Delete(id)
+func (c *TrafficCounter) Delete(uuid string) {
+	c.Counters.Delete(uuid)
 }
 
-func (c *TrafficCounter) Rx(id string, n int) {
-	cts := c.GetCounter(id)
+func (c *TrafficCounter) Rx(uuid string, n int) {
+	cts := c.GetCounter(uuid)
 	cts.DownCounter.Add(int64(n))
 }
 
-func (c *TrafficCounter) Tx(id string, n int) {
-	cts := c.GetCounter(id)
+func (c *TrafficCounter) Tx(uuid string, n int) {
+	cts := c.GetCounter(uuid)
 	cts.UpCounter.Add(int64(n))
 }

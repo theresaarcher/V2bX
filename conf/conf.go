@@ -7,7 +7,7 @@ import (
 
 	"github.com/InazumaV/V2bX/common/json5"
 
-	"github.com/goccy/go-json"
+	"encoding/json/v2"
 )
 
 type Conf struct {

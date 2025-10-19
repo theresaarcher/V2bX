@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/log"
@@ -24,11 +25,18 @@ type DNSConfig struct {
 }
 
 type Sing struct {
-	box        *box.Box
-	ctx        context.Context
-	hookServer *HookServer
-	router     adapter.Router
-	logFactory log.Factory
+	box                       *box.Box
+	ctx                       context.Context
+	hookServer                *HookServer
+	router                    adapter.Router
+	logFactory                log.Factory
+	users                     *UserMap
+	nodeReportMinTrafficBytes map[string]int64
+}
+
+type UserMap struct {
+	uidMap  map[string]int
+	mapLock sync.RWMutex
 }
 
 func init() {
@@ -71,7 +79,9 @@ func New(c *conf.CoreConfig) (vCore.Core, error) {
 	if err != nil {
 		return nil, err
 	}
-	hs := NewHookServer()
+	hs := &HookServer{
+		counter: sync.Map{},
+	}
 	b.Router().AppendTracker(hs)
 	return &Sing{
 		ctx:        b.Router().GetCtx(),
@@ -79,6 +89,10 @@ func New(c *conf.CoreConfig) (vCore.Core, error) {
 		hookServer: hs,
 		router:     b.Router(),
 		logFactory: b.LogFactory(),
+		users: &UserMap{
+			uidMap: make(map[string]int),
+		},
+		nodeReportMinTrafficBytes: make(map[string]int64),
 	}, nil
 }
 

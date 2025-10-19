@@ -17,6 +17,7 @@ type DNSConfig struct {
 }
 
 func (c *Xray) AddNode(tag string, info *panel.NodeInfo, config *conf.Options) error {
+	c.nodeReportMinTrafficBytes[tag] = config.ReportMinTraffic * 1024
 	err := updateDNSConfig(info)
 	if err != nil {
 		return fmt.Errorf("build dns error: %s", err)

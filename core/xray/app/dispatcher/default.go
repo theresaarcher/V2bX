@@ -10,9 +10,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/InazumaV/V2bX/common/counter"
 	"github.com/InazumaV/V2bX/common/rate"
 	"github.com/InazumaV/V2bX/limiter"
 
+	"github.com/xtls/xray-core/app/dispatcher"
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/errors"
@@ -35,7 +37,7 @@ var errSniffingTimeout = errors.New("timeout on sniffing")
 
 type cachedReader struct {
 	sync.Mutex
-	reader *pipe.Reader
+	reader buf.TimeoutReader
 	cache  buf.MultiBuffer
 }
 
@@ -93,17 +95,20 @@ func (r *cachedReader) Interrupt() {
 		r.cache = buf.ReleaseMulti(r.cache)
 	}
 	r.Unlock()
-	r.reader.Interrupt()
+	if p, ok := r.reader.(*pipe.Reader); ok {
+		p.Interrupt()
+	}
 }
 
 // DefaultDispatcher is a default implementation of Dispatcher.
 type DefaultDispatcher struct {
-	ohm    outbound.Manager
-	router routing.Router
-	policy policy.Manager
-	stats  stats.Manager
-	fdns   dns.FakeDNSEngine
-	Wm     *WriterManager
+	ohm          outbound.Manager
+	router       routing.Router
+	policy       policy.Manager
+	stats        stats.Manager
+	fdns         dns.FakeDNSEngine
+	Counter      sync.Map
+	LinkManagers sync.Map // map[string]*LinkManager
 }
 
 func init() {
@@ -127,9 +132,6 @@ func (d *DefaultDispatcher) Init(config *Config, om outbound.Manager, router rou
 	d.router = router
 	d.policy = pm
 	d.stats = sm
-	d.Wm = &WriterManager{
-		writers: make(map[string]map[*ManagedWriter]struct{}),
-	}
 	return nil
 }
 
@@ -151,14 +153,9 @@ func (d *DefaultDispatcher) getLink(ctx context.Context, network net.Network) (*
 	uplinkReader, uplinkWriter := pipe.New(opt...)
 	downlinkReader, downlinkWriter := pipe.New(opt...)
 
-	managedWriter := &ManagedWriter{
-		writer:  uplinkWriter,
-		manager: d.Wm,
-	}
-
 	inboundLink := &transport.Link{
 		Reader: downlinkReader,
-		Writer: managedWriter,
+		Writer: uplinkWriter,
 	}
 
 	outboundLink := &transport.Link{
@@ -170,7 +167,6 @@ func (d *DefaultDispatcher) getLink(ctx context.Context, network net.Network) (*
 	var user *protocol.MemoryUser
 	if sessionInbound != nil {
 		user = sessionInbound.User
-		sessionInbound.CanSpliceCopy = 3
 	}
 
 	var limit *limiter.Limiter
@@ -198,32 +194,46 @@ func (d *DefaultDispatcher) getLink(ctx context.Context, network net.Network) (*
 			common.Interrupt(inboundLink.Reader)
 			return nil, nil, nil, errors.New("Limited ", user.Email, " by conn or ip")
 		}
+		var lm *LinkManager
+		if lmloaded, ok := d.LinkManagers.Load(user.Email); !ok {
+			lm = &LinkManager{
+				links: make(map[*ManagedWriter]buf.Reader),
+			}
+			d.LinkManagers.Store(user.Email, lm)
+		} else {
+			lm = lmloaded.(*LinkManager)
+		}
+		managedWriter := &ManagedWriter{
+			writer:  uplinkWriter,
+			manager: lm,
+		}
+		lm.AddLink(managedWriter, outboundLink.Reader)
+		inboundLink.Writer = managedWriter
 		if w != nil {
+			sessionInbound.CanSpliceCopy = 3
 			inboundLink.Writer = rate.NewRateLimitWriter(inboundLink.Writer, w)
 			outboundLink.Writer = rate.NewRateLimitWriter(outboundLink.Writer, w)
 		}
-		p := d.policy.ForLevel(user.Level)
-		if p.Stats.UserUplink {
-			name := "user>>>" + user.Email + ">>>traffic>>>uplink"
-			if c, _ := stats.GetOrRegisterCounter(d.stats, name); c != nil {
-				inboundLink.Writer = &SizeStatWriter{
-					Counter: c,
-					Writer:  inboundLink.Writer,
-				}
-			}
+		var t *counter.TrafficCounter
+		if c, ok := d.Counter.Load(sessionInbound.Tag); !ok {
+			t = counter.NewTrafficCounter()
+			d.Counter.Store(sessionInbound.Tag, t)
+		} else {
+			t = c.(*counter.TrafficCounter)
 		}
-		if p.Stats.UserDownlink {
-			name := "user>>>" + user.Email + ">>>traffic>>>downlink"
-			if c, _ := stats.GetOrRegisterCounter(d.stats, name); c != nil {
-				outboundLink.Writer = &SizeStatWriter{
-					Counter: c,
-					Writer:  outboundLink.Writer,
-				}
-			}
+
+		ts := t.GetCounter(user.Email)
+		upcounter := &counter.XrayTrafficCounter{V: &ts.UpCounter}
+		downcounter := &counter.XrayTrafficCounter{V: &ts.DownCounter}
+		inboundLink.Writer = &dispatcher.SizeStatWriter{
+			Counter: upcounter,
+			Writer:  inboundLink.Writer,
+		}
+		outboundLink.Writer = &dispatcher.SizeStatWriter{
+			Counter: downcounter,
+			Writer:  outboundLink.Writer,
 		}
 	}
-	managedWriter.email = user.Email
-	d.Wm.AddWriter(managedWriter)
 
 	return inboundLink, outboundLink, limit, nil
 }
@@ -350,12 +360,79 @@ func (d *DefaultDispatcher) DispatchLink(ctx context.Context, destination net.De
 		content = new(session.Content)
 		ctx = session.ContextWithContent(ctx, content)
 	}
+
+	sessionInbound := session.InboundFromContext(ctx)
+	var user *protocol.MemoryUser
+	if sessionInbound != nil {
+		user = sessionInbound.User
+	}
+
+	var limit *limiter.Limiter
+	var err error
+	if user != nil && len(user.Email) > 0 {
+		limit, err = limiter.GetLimiter(sessionInbound.Tag)
+		if err != nil {
+			errors.LogInfo(ctx, "get limiter ", sessionInbound.Tag, " error: ", err)
+			common.Close(outbound.Writer)
+			common.Interrupt(outbound.Reader)
+			return errors.New("get limiter ", sessionInbound.Tag, " error: ", err)
+		}
+		// Speed Limit and Device Limit
+		w, reject := limit.CheckLimit(user.Email,
+			sessionInbound.Source.Address.IP().String(),
+			destination.Network == net.Network_TCP,
+			sessionInbound.Source.Network == net.Network_TCP)
+		if reject {
+			errors.LogInfo(ctx, "Limited ", user.Email, " by conn or ip")
+			common.Close(outbound.Writer)
+			common.Interrupt(outbound.Reader)
+			return errors.New("Limited ", user.Email, " by conn or ip")
+		}
+		var lm *LinkManager
+		if lmloaded, ok := d.LinkManagers.Load(user.Email); !ok {
+			lm = &LinkManager{
+				links: make(map[*ManagedWriter]buf.Reader),
+			}
+			d.LinkManagers.Store(user.Email, lm)
+		} else {
+			lm = lmloaded.(*LinkManager)
+		}
+		managedWriter := &ManagedWriter{
+			writer:  outbound.Writer,
+			manager: lm,
+		}
+		outbound.Writer = managedWriter
+		if w != nil {
+			sessionInbound.CanSpliceCopy = 3
+			outbound.Writer = rate.NewRateLimitWriter(outbound.Writer, w)
+		}
+		var t *counter.TrafficCounter
+		if c, ok := d.Counter.Load(sessionInbound.Tag); !ok {
+			t = counter.NewTrafficCounter()
+			d.Counter.Store(sessionInbound.Tag, t)
+		} else {
+			t = c.(*counter.TrafficCounter)
+		}
+
+		ts := t.GetCounter(user.Email)
+		downcounter := &counter.XrayTrafficCounter{V: &ts.DownCounter}
+		outbound.Reader = &CounterReader{
+			Reader:  &buf.TimeoutWrapperReader{Reader: outbound.Reader},
+			Counter: &ts.UpCounter,
+		}
+		lm.AddLink(managedWriter, outbound.Reader)
+		outbound.Writer = &dispatcher.SizeStatWriter{
+			Counter: downcounter,
+			Writer:  outbound.Writer,
+		}
+	}
+
 	sniffingRequest := content.SniffingRequest
 	if !sniffingRequest.Enabled {
-		d.routedDispatch(ctx, outbound, destination, nil, "")
+		d.routedDispatch(ctx, outbound, destination, limit, "")
 	} else {
 		cReader := &cachedReader{
-			reader: outbound.Reader.(*pipe.Reader),
+			reader: outbound.Reader.(buf.TimeoutReader),
 		}
 		outbound.Reader = cReader
 		result, err := sniffer(ctx, cReader, sniffingRequest.MetadataOnly, destination.Network)
@@ -380,7 +457,7 @@ func (d *DefaultDispatcher) DispatchLink(ctx context.Context, destination net.De
 				ob.Target = destination
 			}
 		}
-		d.routedDispatch(ctx, outbound, destination, nil, content.Protocol)
+		d.routedDispatch(ctx, outbound, destination, limit, content.Protocol)
 	}
 
 	return nil
@@ -515,6 +592,9 @@ func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.
 				handler = h
 			} else {
 				errors.LogWarning(ctx, "non existing outTag: ", outTag)
+				common.Close(link.Writer)
+				common.Interrupt(link.Reader)
+				return // DO NOT CHANGE: the traffic shouldn't be processed by default outbound if the specified outbound tag doesn't exist (yet), e.g., VLESS Reverse Proxy
 			}
 		} else {
 			errors.LogInfo(ctx, "default route for ", destination)

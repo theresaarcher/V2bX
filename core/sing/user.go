@@ -23,6 +23,11 @@ func (b *Sing) AddUsers(p *core.AddUsersParams) (added int, err error) {
 	if !found {
 		return 0, errors.New("the inbound not found")
 	}
+	b.users.mapLock.Lock()
+	defer b.users.mapLock.Unlock()
+	for i := range p.Users {
+		b.users.uidMap[p.Users[i].Uuid] = p.Users[i].Id
+	}
 	switch p.NodeInfo.Type {
 	case "vless":
 		us := make([]option.VLESSUser, len(p.Users))
@@ -129,6 +134,43 @@ func (b *Sing) GetUserTraffic(tag, uuid string, reset bool) (up int64, down int6
 	return 0, 0
 }
 
+func (b *Sing) GetUserTrafficSlice(tag string, reset bool) ([]panel.UserTraffic, error) {
+	trafficSlice := make([]panel.UserTraffic, 0)
+	hook := b.hookServer
+	b.users.mapLock.RLock()
+	defer b.users.mapLock.RUnlock()
+	if v, ok := hook.counter.Load(tag); ok {
+		c := v.(*counter.TrafficCounter)
+		c.Counters.Range(func(key, value interface{}) bool {
+			uuid := key.(string)
+			traffic := value.(*counter.TrafficStorage)
+			up := traffic.UpCounter.Load()
+			down := traffic.DownCounter.Load()
+			if up+down > b.nodeReportMinTrafficBytes[tag] {
+				if reset {
+					traffic.UpCounter.Store(0)
+					traffic.DownCounter.Store(0)
+				}
+				if b.users.uidMap[uuid] == 0 {
+					c.Delete(uuid)
+					return true
+				}
+				trafficSlice = append(trafficSlice, panel.UserTraffic{
+					UID:      b.users.uidMap[uuid],
+					Upload:   up,
+					Download: down,
+				})
+			}
+			return true
+		})
+		if len(trafficSlice) == 0 {
+			return nil, nil
+		}
+		return trafficSlice, nil
+	}
+	return nil, nil
+}
+
 type UserDeleter interface {
 	DelUsers(uuid []string) error
 }
@@ -158,7 +200,14 @@ func (b *Sing) DelUsers(users []panel.UserInfo, tag string, info *panel.NodeInfo
 		return errors.New("the inbound not found")
 	}
 	uuids := make([]string, len(users))
+	b.users.mapLock.Lock()
+	defer b.users.mapLock.Unlock()
 	for i := range users {
+		if v, ok := b.hookServer.counter.Load(tag); ok {
+			c := v.(*counter.TrafficCounter)
+			c.Delete(users[i].Uuid)
+		}
+		delete(b.users.uidMap, users[i].Uuid)
 		uuids[i] = users[i].Uuid
 	}
 	err := del.DelUsers(uuids)

@@ -7,8 +7,9 @@ import (
 	"os"
 	"strings"
 
+	"encoding/json"
+
 	"github.com/InazumaV/V2bX/common/json5"
-	"github.com/goccy/go-json"
 )
 
 type NodeConfig struct {
@@ -109,6 +110,7 @@ type Options struct {
 	ListenIP               string          `json:"ListenIP"`
 	SendIP                 string          `json:"SendIP"`
 	DeviceOnlineMinTraffic int64           `json:"DeviceOnlineMinTraffic"`
+	ReportMinTraffic       int64           `json:"ReportMinTraffic"`
 	LimitConfig            LimitConfig     `json:"LimitConfig"`
 	RawOptions             json.RawMessage `json:"RawOptions"`
 	XrayOptions            *XrayOptions    `json:"XrayOptions"`

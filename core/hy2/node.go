@@ -40,8 +40,9 @@ func (h *Hysteria2) AddNode(tag string, info *panel.NodeInfo, config *conf.Optio
 			logger: h.Logger,
 		},
 		TrafficLogger: &HookServer{
-			Tag:    tag,
-			logger: h.Logger,
+			Tag:                   tag,
+			logger:                h.Logger,
+			ReportMinTrafficBytes: config.ReportMinTraffic * 1024,
 		},
 	}
 
